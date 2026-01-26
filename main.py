@@ -10,8 +10,8 @@ from flask import Flask
 
 # ==========================================
 # ⚠️ CẤU HÌNH CỦA BẠN (SỬA Ở ĐÂY)
-TOKEN = 'DÁN_TOKEN_CỦA_BẠN_VÀO_ĐÂY'
-ADMIN_ID = 0  # Chạy bot, chat /lay_id để lấy số này điền vào (hoặc để 0 nếu muốn ai cũng dùng được)
+TOKEN = '8374954088:AAEGsRqgysifY4gOh0df5IUz74r29T5ggW0'
+ADMIN_ID = 7108698925  # Chạy bot, chat /lay_id để lấy số này điền vào (hoặc để 0 nếu muốn ai cũng dùng được)
 # ==========================================
 
 DB_NAME = 'database_kieman.db'

@@ -47,7 +47,12 @@ app_web = Flask(__name__)
 @app_web.route('/')
 def home(): return "BOT KETOAN VIP ĐANG CHẠY!"
 
-def run_flask(): app_web.run(host='0.0.0.0', port=8080)
+import os # Nhớ thêm dòng này ở đầu file nếu chưa có
+
+def run_flask():
+    # Render sẽ tự cấp Port qua biến môi trường, nếu không thấy thì lấy mặc định 8080
+    port = int(os.environ.get("PORT", 8080))
+    app_web.run(host='0.0.0.0', port=port)
 
 # --- DATABASE ---
 def init_db():

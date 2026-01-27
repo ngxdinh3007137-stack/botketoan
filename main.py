@@ -8,7 +8,251 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from flask import Flask
+import logging
+import sqlite3
+import os
+import uuid
+import threading
+import pandas as pd
+from datetime import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
+from flask import Flask
 
+# ==========================================
+# ⚠️ CẤU HÌNH HỆ THỐNG
+TOKEN = '8374954088:AAEGsRqgysifY4gOh0df5IUz74r29T5ggW0'
+ADMIN_ID = 7108698925  # Thay ID của bạn vào đây
+# ==========================================
+
+DB_NAME = 'database_kieman.db'
+IMAGE_DIR = 'kho_anh_bill'
+
+# States
+UPLOADING, INPUT_MONEY, INPUT_NOTE, PREVIEW, WAITING_REPORT_DATE = range(5)
+
+if not os.path.exists(IMAGE_DIR): os.makedirs(IMAGE_DIR)
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
+
+# --- WEB SERVER (CHO RENDER) ---
+app_web = Flask(__name__)
+@app_web.route('/')
+def home(): return "BOT KETOAN V5.0 ACTIVE!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app_web.run(host='0.0.0.0', port=port)
+
+# --- DATABASE ---
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    conn.cursor().execute('''CREATE TABLE IF NOT EXISTS records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER, image_path TEXT, amount REAL, note TEXT,
+                    created_at DATE DEFAULT (date('now', 'localtime')))''')
+    conn.commit()
+    conn.close()
+
+# --- UTILS ---
+def parse_money(text):
+    try:
+        text = text.lower().replace('đ', '').replace('d', '').replace(' ', '').replace('.', '')
+        if 'k' in text:
+            return float(text.replace('k', '').replace(',', '.')) * 1000
+        return float(text.replace(',', ''))
+    except: return None
+
+# --- GIAO DIỆN CHÍNH ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = "🏢 **HỆ THỐNG QUẢN LÝ CHI TIÊU V5.0**\nVui lòng chọn một chức năng bên dưới:"
+    btns = [
+        [InlineKeyboardButton("📝 Gửi Hóa Đơn Mới", callback_data="start_bill")],
+        [InlineKeyboardButton("📊 Báo Cáo Hình Ảnh", callback_data="menu_report")]
+    ]
+    if update.effective_user.id == ADMIN_ID:
+        btns.append([InlineKeyboardButton("📂 Xuất Excel (Admin)", callback_data="admin_excel")])
+        btns.append([InlineKeyboardButton("🗑️ Reset Dữ Liệu", callback_data="admin_reset")])
+    
+    markup = InlineKeyboardMarkup(btns)
+    if update.callback_query: 
+        try: await update.callback_query.message.edit_text(msg, reply_markup=markup, parse_mode='Markdown')
+        except: await update.callback_query.message.reply_text(msg, reply_markup=markup, parse_mode='Markdown')
+    else: 
+        await update.message.reply_text(msg, reply_markup=markup, parse_mode='Markdown')
+    return ConversationHandler.END
+
+# --- LUỒNG GỬI BILL ---
+async def start_bill_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    context.user_data['photos'] = []
+    await update.callback_query.message.reply_text("📸 **BƯỚC 1:** Bạn hãy gửi ảnh hóa đơn.\n(Gửi xong bấm nút bên dưới)", 
+                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➡️ Tiếp tục", callback_data="photo_done")]]))
+    return UPLOADING
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file = await update.message.photo[-1].get_file()
+    path = os.path.join(IMAGE_DIR, f"{uuid.uuid4()}.jpg")
+    await file.download_to_drive(path)
+    context.user_data['photos'].append(path)
+    context.user_data['last_file_id'] = update.message.photo[-1].file_id
+    return UPLOADING
+
+async def photo_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    if not context.user_data.get('photos'):
+        await update.callback_query.message.reply_text("⚠️ Bạn chưa gửi ảnh nào!")
+        return UPLOADING
+    await update.callback_query.message.reply_text("💰 **BƯỚC 2:** Nhập số tiền (VD: 150k, 1.200.000...):")
+    return INPUT_MONEY
+
+async def handle_money(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    money = parse_money(update.message.text)
+    if money is None:
+        await update.message.reply_text("⚠️ Số tiền không đúng, hãy nhập lại (VD: 50k):")
+        return INPUT_MONEY
+    context.user_data['amount'] = money
+    await update.message.reply_text(f"✅ Đã nhận: `{'{:,.0f}'.format(money)}đ`\n📝 **BƯỚC 3:** Nhập nội dung chi tiêu:", parse_mode='Markdown')
+    return INPUT_NOTE
+
+async def handle_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['note'] = update.message.text
+    msg = (f"🔍 **XÁC NHẬN LƯU ĐƠN HÀNG**\n"
+           f"💵 Số tiền: `{'{:,.0f}'.format(context.user_data['amount'])}đ`\n"
+           f"📝 Nội dung: {context.user_data['note']}\n\n"
+           f"Bạn có đồng ý lưu vào hệ thống không?")
+    btns = [[InlineKeyboardButton("✅ CHẤP NHẬN", callback_data="save_all"),
+             InlineKeyboardButton("❌ HỦY BỎ", callback_data="cancel_all")]]
+    await update.message.reply_photo(photo=context.user_data['last_file_id'], caption=msg, 
+                                   reply_markup=InlineKeyboardMarkup(btns), parse_mode='Markdown')
+    return PREVIEW
+
+async def finalize_bill(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "save_all":
+        conn = sqlite3.connect(DB_NAME)
+        conn.cursor().execute("INSERT INTO records (user_id, image_path, amount, note) VALUES (?, ?, ?, ?)",
+                  (query.from_user.id, context.user_data['photos'][0], context.user_data['amount'], context.user_data['note']))
+        conn.commit()
+        conn.close()
+        await query.message.edit_caption("🚀 **LƯU THÀNH CÔNG!**", parse_mode='Markdown')
+    else:
+        await query.message.edit_caption("🚫 **ĐÃ HỦY THAO TÁC.**")
+    context.user_data.clear()
+    return await start(update, context)
+
+# --- BÁO CÁO HÌNH ẢNH THEO NGÀY ---
+async def menu_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    btns = [
+        [InlineKeyboardButton("📅 Hôm nay", callback_data="rep_today")],
+        [InlineKeyboardButton("🗓️ Chọn ngày khác", callback_data="rep_pick_date")],
+        [InlineKeyboardButton("⬅️ Quay lại", callback_data="back_to_start")]
+    ]
+    await query.message.edit_text("📊 **BÁO CÁO HÌNH ẢNH**\nBạn muốn xem dữ liệu khi nào?", 
+                                reply_markup=InlineKeyboardMarkup(btns), parse_mode='Markdown')
+
+async def ask_report_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text("📅 **Nhập ngày bạn muốn xem**\nĐịnh dạng: `ngày/tháng/năm` (VD: 27/01/2026)")
+    return WAITING_REPORT_DATE
+
+async def process_report(update: Update, context: ContextTypes.DEFAULT_TYPE, date_str=None):
+    if not date_str:
+        try:
+            date_input = update.message.text
+            date_str = datetime.strptime(date_input, '%d/%m/%Y').strftime('%Y-%m-%d')
+            display_date = date_input
+        except:
+            await update.message.reply_text("❌ Sai định dạng! Hãy nhập lại (VD: 25/01/2026):")
+            return WAITING_REPORT_DATE
+    else:
+        display_date = "Hôm nay"
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT id, amount, note, image_path FROM records WHERE created_at = ?", (date_str,))
+    rows = c.fetchall()
+    conn.close()
+
+    if not rows:
+        await (update.callback_query.message if update.callback_query else update.message).reply_text(f"📅 Ngày {display_date} không có dữ liệu nào.")
+        return await start(update, context)
+
+    total = sum(row[1] for row in rows)
+    head = f"📊 **DỮ LIỆU CHI TIÊU {display_date}**\n💰 Tổng cộng: `{'{:,.0f}'.format(total)}đ`"
+    
+    target = update.callback_query.message if update.callback_query else update.message
+    await target.reply_text(head, parse_mode='Markdown')
+
+    for row in rows:
+        caption = f"🆔 ID: `{row[0]}`\n💸 Tiền: `{'{:,.0f}'.format(row[1])}đ`\n📝 Nội dung: {row[2]}"
+        try: await target.reply_photo(photo=open(row[3], 'rb'), caption=caption, parse_mode='Markdown')
+        except: pass
+    
+    return await start(update, context)
+
+# --- ADMIN FUNCTIONS ---
+async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    try:
+        s_date = datetime.strptime(context.args[0], '%d/%m/%Y').strftime('%Y-%m-%d')
+        e_date = datetime.strptime(context.args[1], '%d/%m/%Y').strftime('%Y-%m-%d')
+        conn = sqlite3.connect(DB_NAME)
+        df = pd.read_sql_query(f"SELECT * FROM records WHERE created_at BETWEEN '{s_date}' AND '{e_date}'", conn)
+        conn.close()
+        fname = f"Bao_cao_{s_date}.xlsx"
+        df.to_excel(fname, index=False)
+        await update.message.reply_document(open(fname, 'rb'), caption=f"📊 Báo cáo Excel {context.args[0]} - {context.args[1]}")
+        os.remove(fname)
+    except: await update.message.reply_text("⚠️ Cú pháp: `/xuat 01/01/2026 31/01/2026`")
+
+async def reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    query = update.callback_query
+    await query.answer()
+    conn = sqlite3.connect(DB_NAME)
+    conn.cursor().execute("DELETE FROM records")
+    conn.commit()
+    conn.close()
+    await query.message.reply_text("🗑️ Hệ thống đã được xóa sạch dữ liệu!")
+    return await start(update, context)
+
+# --- MAIN ---
+def main():
+    init_db()
+    threading.Thread(target=run_flask).start()
+    app = Application.builder().token(TOKEN).build()
+
+    conv = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(start_bill_flow, pattern="^start_bill$"),
+            CallbackQueryHandler(ask_report_date, pattern="^rep_pick_date$")
+        ],
+        states={
+            UPLOADING: [MessageHandler(filters.PHOTO, handle_photo), CallbackQueryHandler(photo_done, pattern="^photo_done$")],
+            INPUT_MONEY: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_money)],
+            INPUT_NOTE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_note)],
+            PREVIEW: [CallbackQueryHandler(finalize_bill, pattern="^(save_all|cancel_all)$")],
+            WAITING_REPORT_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_report)]
+        },
+        fallbacks=[CallbackQueryHandler(start, pattern="^cancel_all$"), CommandHandler("start", start)]
+    )
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("xuat", export_excel))
+    app.add_handler(CommandHandler("lay_id", lambda u,c: u.message.reply_text(f"ID: {u.effective_user.id}")))
+    app.add_handler(CallbackQueryHandler(menu_report, pattern="^menu_report$"))
+    app.add_handler(CallbackQueryHandler(lambda u,c: process_report(u,c,datetime.now().strftime('%Y-%m-%d')), pattern="^rep_today$"))
+    app.add_handler(CallbackQueryHandler(start, pattern="^back_to_start$"))
+    app.add_handler(CallbackQueryHandler(reset_data, pattern="^admin_reset$"))
+    app.add_handler(CallbackQueryHandler(lambda u,c: u.callback_query.message.reply_text("Nhập: `/xuat ngày/tháng/năm ngày/tháng/năm`"), pattern="^admin_excel$"))
+    app.add_handler(conv)
+
+    app.run_polling()
+
+if __name__ == '__main__': main()
 # ==========================================
 # ⚠️ CẤU HÌNH ADMIN
 TOKEN = '8374954088:AAEGsRqgysifY4gOh0df5IUz74r29T5ggW0'

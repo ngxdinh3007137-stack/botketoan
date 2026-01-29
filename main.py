@@ -6,9 +6,9 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from flask import Flask
 
 # ================= CONFIG (Sếp điền ở đây) =================
-TOKEN = '8374954088:AAEGsRqgysifY4gOh0df5IUz74r29T5ggW0'
+TOKEN = '7904820608:AAGAo1QOjzBGOEYr0irpr5_DdMfcDMJi5Ho'
 SEP_ID =  7108698925          # ID của Sếp
-QUAN_LY_IDS = []     # ID các Quản lý [123, 456]
+QUAN_LY_IDS = [7464877090]     # ID các Quản lý [123, 456]
 # Link SQL (Lấy từ Supabase hoặc ElephantSQL)
 DATABASE_URL = 'postgres://user:pass@host:5432/dbname'
 # Cloudinary (Lấy tại cloudinary.com - Miễn phí) để tạo link ảnh

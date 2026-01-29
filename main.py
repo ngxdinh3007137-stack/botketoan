@@ -11,7 +11,8 @@ SEP_ID = 7108698925
 QUAN_LY_IDS = [7464877090]     
 
 # Link SQL chuẩn (Đã đưa ra ngoài để tránh lỗi Syntax)
-DATABASE_URL = "postgresql://postgres.xlcvbctcdlrqjzolamig:MINHDANG010220009@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?sslmode=require"
+# Cổng này là để nối vào Database (Sếp sửa từ 6543 thành 5432)
+DATABASE_URL = "postgresql://postgres.xlcvbctcdlrqjzolamig:MINHDANG010220009@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require"
 
 # Cấu hình Cloudinary
 cloudinary.config(cloudinary_url="cloudinary://116873382629459:NCGEO@dje8bisnw")

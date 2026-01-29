@@ -5,18 +5,17 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMe
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from flask import Flask
 
-# ================= CONFIG (Sếp đã điền chuẩn) =================
+# ================= CONFIG =================
 TOKEN = '7904820608:AAGAo1QOjzBGOEYr0irpr5_DdMfcDMJi5Ho'
 SEP_ID = 7108698925           
 QUAN_LY_IDS = [7464877090]     
 
-# Link SQL chuẩn (Đã đưa ra ngoài để tránh lỗi Syntax)
-# Cổng này là để nối vào Database (Sếp sửa từ 6543 thành 5432)
-DATABASE_URL = "postgresql://postgres.xlcvbctcdlrqjzolamig:MINHDANG010220009@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?sslmode=require"
+# Link SQL chuẩn (Dùng Port 5432 để Render dễ kết nối)
+DATABASE_URL = "postgresql://postgres.xlcvbctcdlrqjzolamig:MINHDANG010220009@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require"
 
 # Cấu hình Cloudinary
 cloudinary.config(cloudinary_url="cloudinary://116873382629459:NCGEO@dje8bisnw")
-# ==========================================================
+# ==========================================
 
 S_PHOTO, S_MONEY, S_NOTE, S_PREVIEW, S_REP_S, S_REP_E = range(6)
 IMG_DIR = 'temp_img'
@@ -25,28 +24,23 @@ logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
 # --- KẾT NỐI SQL SERVER ---
 def db_q(sql, p=(), fetch=False):
-    # Kết nối dùng DATABASE_URL đã khai báo ở trên
-    conn = psycopg2.connect(DATABASE_URL, sslmode='require', connect_timeout=10)
-    cur = conn.cursor()
     try:
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        cur = conn.cursor()
         cur.execute(sql, p)
         res = cur.fetchall() if fetch else None
         conn.commit()
-        return res
-    except Exception as e:
-        print(f"Lỗi SQL: {e}")
-        return None
-    finally:
         cur.close()
         conn.close()
-# Khởi tạo bảng SQL
-db_q("""CREATE TABLE IF NOT EXISTS records (
-    id SERIAL PRIMARY KEY, user_id BIGINT, user_name TEXT, 
-    image_urls TEXT, amount DECIMAL, note TEXT, created_at DATE DEFAULT CURRENT_DATE)""")
+        return res
+    except Exception as e:
+        print(f"❌ Lỗi SQL: {e}")
+        return None
 
+# --- WEB SERVER (Để Render không tắt Bot) ---
 app = Flask('')
 @app.route('/')
-def home(): return "SQL Server Active"
+def home(): return "<h1>Bot Ketoan Is Running!</h1>"
 def run_web(): app.run(host='0.0.0.0', port=8080)
 
 def is_admin(u_id): return u_id == SEP_ID or u_id in QUAN_LY_IDS
@@ -60,6 +54,7 @@ async def start(u: Update, c: ContextTypes.DEFAULT_TYPE):
           [InlineKeyboardButton("📊 Báo Cáo Khoảng Ngày", callback_data="go_rep")]]
     if u.effective_user.id == SEP_ID:
         kb.append([InlineKeyboardButton("🗑 Xóa sạch dữ liệu (Sếp)", callback_data="go_rst")])
+    
     msg = "🏢 **HỆ THỐNG KẾ TOÁN ENTERPRISE**\nChào Sếp và Quản lý."
     target = u.callback_query.message if u.callback_query else u.message
     await target.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
@@ -70,7 +65,8 @@ async def cmd_gui(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if u.callback_query: await u.callback_query.answer()
     c.user_data['pics'] = []
     kb = [[InlineKeyboardButton("❌ Hủy", callback_data="cancel"), InlineKeyboardButton("➡️ Tiếp tục", callback_data="p_done")]]
-    await (u.callback_query.message if u.callback_query else u.message).reply_text("📸 **Gửi ảnh Bill:**", reply_markup=InlineKeyboardMarkup(kb))
+    msg_target = u.callback_query.message if u.callback_query else u.message
+    await msg_target.reply_text("📸 **Gửi ảnh Bill:**", reply_markup=InlineKeyboardMarkup(kb))
     return S_PHOTO
 
 async def h_photo(u: Update, c: ContextTypes.DEFAULT_TYPE):
@@ -103,26 +99,28 @@ async def h_note(u: Update, c: ContextTypes.DEFAULT_TYPE):
 
 async def h_save(u: Update, c: ContextTypes.DEFAULT_TYPE):
     q = u.callback_query
-    await q.answer(); await q.message.edit_text("⏳ Đang tải ảnh lên SQL Server...")
+    await q.answer(); await q.message.edit_text("⏳ Đang tải ảnh lên Cloudinary & SQL...")
     
     links = []
     for p in c.user_data['pics']:
         res = cloudinary.uploader.upload(p)
         links.append(res['secure_url'])
-        os.remove(p) # Xóa ảnh tạm
+        if os.path.exists(p): os.remove(p)
 
     db_q("INSERT INTO records (user_id, user_name, image_urls, amount, note) VALUES (%s, %s, %s, %s, %s)", 
          (q.from_user.id, q.from_user.full_name, ",".join(links), c.user_data['amt'], c.user_data['note']))
     
     if SEP_ID != 0:
-        await c.bot.send_message(SEP_ID, f"🔔 **Bill mới từ {q.from_user.full_name}:**\n💸 `{c.user_data['amt']:,}đ` - {c.user_data['note']}\n🔗 [Xem ảnh]({links[0]})", parse_mode='Markdown')
+        try: await c.bot.send_message(SEP_ID, f"🔔 **Bill mới từ {q.from_user.full_name}:**\n💸 `{c.user_data['amt']:,}đ` - {c.user_data['note']}\n🔗 [Xem ảnh]({links[0]})", parse_mode='Markdown')
+        except: pass
     
-    await q.message.reply_text("🚀 **ĐÃ LƯU VÀO SQL SERVER THÀNH CÔNG!**")
+    await q.message.reply_text("🚀 **ĐÃ LƯU THÀNH CÔNG!**")
     return await start(u, c)
 
-# --- BÁO CÁO SQL ---
+# --- BÁO CÁO & XUẤT EXCEL ---
 async def cmd_rep(u: Update, c: ContextTypes.DEFAULT_TYPE):
-    await (u.callback_query.message if u.callback_query else u.message).reply_text("📅 **Từ ngày** (dd/mm/yyyy):")
+    target = u.callback_query.message if u.callback_query else u.message
+    await target.reply_text("📅 **Từ ngày** (dd/mm/yyyy):")
     return S_REP_S
 
 async def h_rep_s(u: Update, c: ContextTypes.DEFAULT_TYPE):
@@ -136,12 +134,16 @@ async def h_rep_e(u: Update, c: ContextTypes.DEFAULT_TYPE):
     try:
         end = datetime.strptime(u.message.text, '%d/%m/%Y').strftime('%Y-%m-%d')
         rows = db_q("SELECT id, amount, note, image_urls, created_at, user_name FROM records WHERE created_at BETWEEN %s AND %s", (c.user_data['start'], end), True)
-        if not rows: await u.message.reply_text("📭 Trống."); return await start(u, c)
+        if not rows: 
+            await u.message.reply_text("📭 Không có dữ liệu trong khoảng này."); 
+            return await start(u, c)
         
-        await u.message.reply_text(f"📊 **TỔNG CHI:** `{sum(r[1] for r in rows):,}đ`", parse_mode='Markdown')
+        total = sum(r[1] for r in rows)
+        await u.message.reply_text(f"📊 **TỔNG CHI:** `{total:,}đ`", parse_mode='Markdown')
+        
         if is_admin(u.effective_user.id):
             kb = [[InlineKeyboardButton("📂 Xuất Excel (Có Link Ảnh)", callback_data=f"xls_{c.user_data['start']}_{end}")]]
-            await u.message.reply_text("Tiện ích Sếp/Quản lý:", reply_markup=InlineKeyboardMarkup(kb))
+            await u.message.reply_text("Tiện ích dành cho Sếp:", reply_markup=InlineKeyboardMarkup(kb))
         return await start(u, c)
     except: return await start(u, c)
 
@@ -152,26 +154,37 @@ async def export_xls(u: Update, c: ContextTypes.DEFAULT_TYPE):
     
     fn = f"Bao_Cao_{s}_{e}.xlsx"
     df = pd.DataFrame(rows, columns=['ID','Ngày','Nhân viên','Số tiền','Ghi chú','Link Ảnh'])
-    
-    # Tạo Excel có link click được
     writer = pd.ExcelWriter(fn, engine='xlsxwriter')
     df.to_excel(writer, index=False, sheet_name='Data')
     writer.close()
     
-    await q.message.reply_document(open(fn, 'rb'), caption=f"📊 Báo cáo từ {s} đến {e}\n(Mở Excel, click vào Link Ảnh để xem trực tiếp)")
+    await q.message.reply_document(open(fn, 'rb'), caption=f"📊 Báo cáo từ {s} đến {e}")
     os.remove(fn)
 
 async def cancel(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if u.callback_query: await u.callback_query.answer()
-    await (u.callback_query.message if u.callback_query else u.message).reply_text("🚫 Hủy.")
+    target = u.callback_query.message if u.callback_query else u.message
+    await target.reply_text("🚫 Đã hủy thao tác.")
     return await start(u, c)
 
+# --- KHỞI CHẠY ---
 def main():
-    threading.Thread(target=run_web).start()
+    threading.Thread(target=run_web, daemon=True).start()
+    
+    # Tạo bảng nếu chưa có
+    db_q("""CREATE TABLE IF NOT EXISTS records (
+        id SERIAL PRIMARY KEY, user_id BIGINT, user_name TEXT, 
+        image_urls TEXT, amount DECIMAL, note TEXT, created_at DATE DEFAULT CURRENT_DATE)""")
+
     bot = Application.builder().token(TOKEN).post_init(setup_menu).build()
     
     conv = ConversationHandler(
-        entry_points=[CommandHandler("gui", cmd_gui), CommandHandler("baocao", cmd_rep), CallbackQueryHandler(cmd_gui, "^go_gui$"), CallbackQueryHandler(cmd_rep, "^go_rep$")],
+        entry_points=[
+            CommandHandler("gui", cmd_gui), 
+            CommandHandler("baocao", cmd_rep), 
+            CallbackQueryHandler(cmd_gui, "^go_gui$"), 
+            CallbackQueryHandler(cmd_rep, "^go_rep$")
+        ],
         states={
             S_PHOTO: [MessageHandler(filters.PHOTO, h_photo), CallbackQueryHandler(p_done, "^p_done$")],
             S_MONEY: [MessageHandler(filters.TEXT & ~filters.COMMAND, h_money)],
@@ -182,10 +195,14 @@ def main():
         },
         fallbacks=[CallbackQueryHandler(cancel, "^cancel$"), CommandHandler("start", start)]
     )
-    bot.add_handler(conv); bot.add_handler(CommandHandler("start", start))
-    bot.add_handler(CommandHandler("id", lambda u,c: u.message.reply_text(f"ID: `{u.effective_user.id}`", parse_mode='Markdown')))
+    
+    bot.add_handler(conv)
+    bot.add_handler(CommandHandler("start", start))
+    bot.add_handler(CommandHandler("id", lambda u,c: u.message.reply_text(f"ID của bạn: `{u.effective_user.id}`", parse_mode='Markdown')))
     bot.add_handler(CallbackQueryHandler(export_xls, "^xls_"))
-    bot.add_handler(CallbackQueryHandler(lambda u,c: db_q("DELETE FROM records") or u.callback_query.message.reply_text("🗑 Reset xong!"), "^go_rst$"))
+    bot.add_handler(CallbackQueryHandler(lambda u,c: db_q("DELETE FROM records") or u.callback_query.message.reply_text("🗑 Dữ liệu đã được xóa sạch!"), "^go_rst$"))
+    
+    print("Bot is running...")
     bot.run_polling()
 
 if __name__ == '__main__': main()

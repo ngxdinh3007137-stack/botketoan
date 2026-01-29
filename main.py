@@ -12,7 +12,9 @@ QUAN_LY_IDS = []     # ID các Quản lý [123, 456]
 # Link SQL (Lấy từ Supabase hoặc ElephantSQL)
 DATABASE_URL = 'postgres://user:pass@host:5432/dbname'
 # Cloudinary (Lấy tại cloudinary.com - Miễn phí) để tạo link ảnh
-cloudinary.config(cloud_name='xxx', api_key='xxx', api_secret='xxx')
+# Sửa đoạn này trong main.py để Bot tự lấy link từ Render Sếp vừa dán
+import os
+cloudinary.config(cloudinary_url=os.getenv('CLOUDINARY_URL'))
 # ==========================================================
 
 S_PHOTO, S_MONEY, S_NOTE, S_PREVIEW, S_REP_S, S_REP_E = range(6)
@@ -22,15 +24,22 @@ logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
 # --- KẾT NỐI SQL SERVER ---
 def db_q(sql, p=(), fetch=False):
-    conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+    # Dùng đúng thông số này để Render không bị từ chối kết nối
+    conn = psycopg2.connect(
+        DATABASE_URL = "postgresql://postgres.xlcvbctcdlrqjzolamig:MINHDANG010220009@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?sslmode=require"
+        sslmode='require', 
+        connect_timeout=10
+    )
     cur = conn.cursor()
-    cur.execute(sql, p)
-    if fetch:
-        res = cur.fetchall()
-        cur.close(); conn.close()
-        return res
-    conn.commit()
-    cur.close(); conn.close()
+    try:
+        cur.execute(sql, p)
+        if fetch:
+            res = cur.fetchall()
+            return res
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
 
 # Khởi tạo bảng SQL
 db_q("""CREATE TABLE IF NOT EXISTS records (

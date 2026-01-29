@@ -1,4 +1,7 @@
 python-telegram-bot
-flask
 pandas
-openpyxl
+psycopg2-binary
+cloudinary
+xlsxwriter
+flask
+gunicorn

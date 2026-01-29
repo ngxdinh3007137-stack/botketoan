@@ -5,15 +5,15 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMe
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from flask import Flask
 
-# ================= CONFIG (Sếp điền ở đây) =================
+# ================= CONFIG (Sếp đã điền chuẩn) =================
 TOKEN = '7904820608:AAGAo1QOjzBGOEYr0irpr5_DdMfcDMJi5Ho'
-SEP_ID =  7108698925          # ID của Sếp
-QUAN_LY_IDS = [7464877090]     # ID các Quản lý [123, 456]
-# Link SQL (Lấy từ Supabase hoặc ElephantSQL)
-DATABASE_URL = 'postgres://user:pass@host:5432/dbname'
-# Cloudinary (Lấy tại cloudinary.com - Miễn phí) để tạo link ảnh
-# Sửa đoạn này trong main.py để Bot tự lấy link từ Render Sếp vừa dán
-import os
+SEP_ID = 7108698925           
+QUAN_LY_IDS = [7464877090]     
+
+# Link SQL chuẩn (Đã đưa ra ngoài để tránh lỗi Syntax)
+DATABASE_URL = "postgresql://postgres.xlcvbctcdlrqjzolamig:MINHDANG010220009@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?sslmode=require"
+
+# Cấu hình Cloudinary
 cloudinary.config(cloudinary_url="cloudinary://116873382629459:NCGEO@dje8bisnw")
 # ==========================================================
 
@@ -24,23 +24,20 @@ logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
 # --- KẾT NỐI SQL SERVER ---
 def db_q(sql, p=(), fetch=False):
-    # Dùng đúng thông số này để Render không bị từ chối kết nối
-    conn = psycopg2.connect(
-       DATABASE_URL = "postgresql://postgres.xlcvbctcdlrqjzolamig:MINHDANG010220009@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?sslmode=require"
-        sslmode='require', 
-        connect_timeout=10
-    )
+    # Kết nối dùng DATABASE_URL đã khai báo ở trên
+    conn = psycopg2.connect(DATABASE_URL, sslmode='require', connect_timeout=10)
     cur = conn.cursor()
     try:
         cur.execute(sql, p)
-        if fetch:
-            res = cur.fetchall()
-            return res
+        res = cur.fetchall() if fetch else None
         conn.commit()
+        return res
+    except Exception as e:
+        print(f"Lỗi SQL: {e}")
+        return None
     finally:
         cur.close()
         conn.close()
-
 # Khởi tạo bảng SQL
 db_q("""CREATE TABLE IF NOT EXISTS records (
     id SERIAL PRIMARY KEY, user_id BIGINT, user_name TEXT, 
